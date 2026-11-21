@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- [http] Strict streaming mode via ``stream='json'`` connection argument. Rows are streamed in ``JSONCompactEachRowWithNamesAndTypes`` format and validated as they are parsed: a missing or malformed header, a row whose column count does not match the header, a non-data (e.g. error message) line or an interrupted connection raise ``StreamException`` carrying the number of rows parsed so far, instead of being silently treated as the end of the result. The underlying HTTP response is released when the stream is exhausted, fails, or the cursor is closed or re-used for another query. Default (prefetch) and ``stream=1`` TSV behavior is unchanged.
 
 ## [0.3.2] - 2024-06-12
 ### Added

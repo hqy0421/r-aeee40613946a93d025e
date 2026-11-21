@@ -31,10 +31,16 @@ class Connection(object):
 
     def __init__(self, *args, **kwargs):
 
-        stream = bool(kwargs.pop('stream', None))
+        stream = kwargs.pop('stream', None)
+
+        # `stream='json'` strictly streams rows in
+        # JSONCompactEachRowWithNamesAndTypes format; any other truthy
+        # value streams TabSeparatedWithNamesAndTypes as before.
+        self._stream_json = (
+            isinstance(stream, str) and stream.lower() == 'json'
+        )
         self._prefetch = not stream
 
-        # TODO: support `stream` argument in the transport.
         self.transport = self.transport_cls(*args, **kwargs)
         super(Connection, self).__init__()
 
@@ -99,7 +105,7 @@ class Cursor(object):
         ]
 
     def close(self):
-        pass
+        self._reset_state()
 
     def _prepare(self, raw_sql, context=None):
         if context:
@@ -128,7 +134,10 @@ class Cursor(object):
         transport = self._connection.transport
         params = {'query_id': self._query_id}
         raw_sql = self._prepare(raw_sql, context)
-        response_gen = transport.execute(raw_sql, params=params)
+        if self._connection._stream_json:
+            response_gen = transport.execute_stream(raw_sql, params=params)
+        else:
+            response_gen = transport.execute(raw_sql, params=params)
 
         self._process_response(response_gen)
         self._end_query()
@@ -221,6 +230,7 @@ class Cursor(object):
         self._end_query()
         self._query_id = None
         self._rows = None
+        self._release_response()
 
     @property
     def _prefetch(self):
@@ -240,6 +250,8 @@ class Cursor(object):
         """
         Resets query state and get ready for another query.
         """
+        self._release_response()
+
         self._query_id = None
         self._state = self._states.NONE
 
@@ -247,6 +259,21 @@ class Cursor(object):
         self._types = None
         self._rows = None
         self._response = None
+
+    def _release_response(self):
+        """
+        Releases the HTTP response of the current query, if any.
+        """
+        response = self._response
+        if response is None:
+            return
+
+        close = getattr(response, 'close', None)
+        if close is not None:
+            try:
+                close()
+            except Exception:
+                pass
 
     def _begin_query(self):
         self._state = self._states.RUNNING
